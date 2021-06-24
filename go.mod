@@ -1,4 +1,4 @@
-module ipfsforce/venus/metrics
+module github.com/ipfs-force-community/metrics
 
 go 1.16
 
