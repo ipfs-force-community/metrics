@@ -78,3 +78,8 @@ func RegisterJaeger(name string, cfg *TraceConfig) (*jaeger.Exporter, error) {
 
 	return je, err
 }
+
+func UnregisterJaeger(exp *jaeger.Exporter) {
+	exp.Flush()
+	trace.UnregisterExporter(exp)
+}
