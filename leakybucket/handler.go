@@ -21,7 +21,7 @@ type RateLimitHandler struct {
 	userbackets map[string]*Bucket
 	mux         sync.RWMutex
 
-	next http.HandlerFunc
+	next http.Handler
 }
 
 func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
@@ -49,7 +49,7 @@ func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	h.next(res, req)
+	h.next.ServeHTTP(res, req)
 }
 
 func (h *RateLimitHandler) getBucket(user string) *Bucket {
@@ -79,7 +79,7 @@ var _ = (http.Handler)((*RateLimitHandler)(nil))
 
 type FnListAccountBuckets func() ([]*Bucket, error)
 
-func NewRateLimitHandler(redisEndPoint string, next http.HandlerFunc, ) (*RateLimitHandler, error) {
+func NewRateLimitHandler(redisEndPoint string, next http.Handler, ) (*RateLimitHandler, error) {
 	if next == nil {
 		return nil, fmt.Errorf("listBuckets and next.ServerHTTP is required")
 	}
