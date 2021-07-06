@@ -20,14 +20,20 @@ type RateLimitHandler struct {
 	limiter     *redis_rate.Limiter
 	userbackets map[string]*Bucket
 	mux         sync.RWMutex
+	next        http.Handler
 
-	next http.Handler
+	fnAccFromCtx func(ctx context.Context) (string, bool)
 }
 
 func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
-	var account, isok = req.Context().Value("account").(string)
-	if !isok {
-		// todo: response error?
+	if h.fnAccFromCtx == nil { // todo: response error?
+		h.next.ServeHTTP(res, req)
+		return
+	}
+	account, isok := h.fnAccFromCtx(req.Context())
+	if !isok { // todo: response error?
+		h.next.ServeHTTP(res, req)
+		return
 	}
 	var bucket *Bucket
 	if bucket, isok = h.userbackets[account]; !isok {
@@ -41,12 +47,16 @@ func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request)
 
 	if err != nil {
 		// todo: handle this redis error
+		fmt.Printf("rate limit allow error:%s\n", err.Error())
+	} else {
+		fmt.Printf("rate-limit: allow:%d, limit:%d, remaining:%d\n", allow.Allowed, allow.Limit, allow.Remaining)
 
-	} else if allow.Allowed < 1 {
-		res.WriteHeader(http.StatusForbidden)
-		_, _ = res.Write([]byte(fmt.Sprintf("account:%s, url:%s, rate limit was triggered",
-			account, req.URL.String())))
-		return
+		if allow.Allowed < 1 {
+			res.WriteHeader(http.StatusForbidden)
+			_, _ = res.Write([]byte(fmt.Sprintf("account:%s, url:%s, rate limit was triggered",
+				account, req.URL.String())))
+			return
+		}
 	}
 
 	h.next.ServeHTTP(res, req)
@@ -79,7 +89,7 @@ var _ = (http.Handler)((*RateLimitHandler)(nil))
 
 type FnListAccountBuckets func() ([]*Bucket, error)
 
-func NewRateLimitHandler(redisEndPoint string, next http.Handler, ) (*RateLimitHandler, error) {
+func NewRateLimitHandler(redisEndPoint string, next http.Handler, getAccount func(ctx context.Context) string) (*RateLimitHandler, error) {
 	if next == nil {
 		return nil, fmt.Errorf("listBuckets and next.ServerHTTP is required")
 	}
@@ -89,10 +99,12 @@ func NewRateLimitHandler(redisEndPoint string, next http.Handler, ) (*RateLimitH
 	rdb := redis.NewClient(&redis.Options{
 		Addr: redisEndPoint,
 	})
-	_ = rdb.FlushDB(ctx).Err()
-
+	if err := rdb.FlushDB(ctx).Err(); err != nil {
+		return nil, err
+	}
 	h := &RateLimitHandler{limiter: redis_rate.NewLimiter(rdb),
-		userbackets: make(map[string]*Bucket), next: next}
+		fnAccFromCtx: getAccount,
+		userbackets:  make(map[string]*Bucket), next: next}
 
 	return h, nil
 }
