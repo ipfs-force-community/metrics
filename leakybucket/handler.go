@@ -16,13 +16,15 @@ type Bucket struct {
 	Rate, Cap int
 }
 
+type FnAccFromCtx func(context.Context) (string, bool)
+
 type RateLimitHandler struct {
 	limiter     *redis_rate.Limiter
 	userbackets map[string]*Bucket
 	mux         sync.RWMutex
 	next        http.Handler
 
-	fnAccFromCtx func(ctx context.Context) (string, bool)
+	fnAccFromCtx FnAccFromCtx
 }
 
 func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
@@ -89,7 +91,7 @@ var _ = (http.Handler)((*RateLimitHandler)(nil))
 
 type FnListAccountBuckets func() ([]*Bucket, error)
 
-func NewRateLimitHandler(redisEndPoint string, next http.Handler, getAccount func(ctx context.Context) string) (*RateLimitHandler, error) {
+func NewRateLimitHandler(redisEndPoint string, next http.Handler, fnAccFromCtx FnAccFromCtx) (*RateLimitHandler, error) {
 	if next == nil {
 		return nil, fmt.Errorf("listBuckets and next.ServerHTTP is required")
 	}
@@ -99,11 +101,12 @@ func NewRateLimitHandler(redisEndPoint string, next http.Handler, getAccount fun
 	rdb := redis.NewClient(&redis.Options{
 		Addr: redisEndPoint,
 	})
+
 	if err := rdb.FlushDB(ctx).Err(); err != nil {
 		return nil, err
 	}
 	h := &RateLimitHandler{limiter: redis_rate.NewLimiter(rdb),
-		fnAccFromCtx: getAccount,
+		fnAccFromCtx: fnAccFromCtx,
 		userbackets:  make(map[string]*Bucket), next: next}
 
 	return h, nil
