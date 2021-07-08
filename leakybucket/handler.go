@@ -16,47 +16,88 @@ type Bucket struct {
 	Rate, Cap int
 }
 
+type IBucketsFinder interface {
+	UserBucket(string) (*Bucket, error)
+	ListUserBuckets() ([]*Bucket, error)
+}
+
+type IValueFromCtx interface {
+	AccFromCtx(context.Context) (string, bool)
+	HostFromCtx(context.Context) (string, bool)
+}
+
 type FnAccFromCtx func(context.Context) (string, bool)
 
+type ILoger interface {
+	Info(args ...interface{})
+	Infof(template string, args ...interface{})
+	Warn(args ...interface{})
+	Warnf(template string, args ...interface{})
+	Error(args ...interface{})
+	Errorf(template string, args ...interface{})
+	Debug(args ...interface{})
+	Debugf(template string, args ...interface{})
+}
+
 type RateLimitHandler struct {
+	ILoger
+	IValueFromCtx
 	limiter     *redis_rate.Limiter
-	userbackets map[string]*Bucket
+	userbuckets map[string]*Bucket
 	mux         sync.RWMutex
 	next        http.Handler
+	finder      IBucketsFinder
 
-	fnAccFromCtx FnAccFromCtx
+	refreshTaskRunning bool
 }
 
 func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
-	if h.fnAccFromCtx == nil { // todo: response error?
+	if h.IValueFromCtx == nil { // todo: response error?
 		h.next.ServeHTTP(res, req)
 		return
 	}
-	account, isok := h.fnAccFromCtx(req.Context())
+	reqCtx := req.Context()
+
+	host, _ := h.HostFromCtx(reqCtx)
+	user, isok := h.AccFromCtx(reqCtx)
+
 	if !isok { // todo: response error?
+		h.Warnf("rate-limit, get user(request from host:%s) failed: can't find an 'account' key\n", host)
 		h.next.ServeHTTP(res, req)
 		return
 	}
-	var bucket *Bucket
-	if bucket, isok = h.userbackets[account]; !isok {
+
+	var bucket, err = h.getBucket(user)
+	if err != nil {
 		// todo: response error?
+		h.Warnf("rate-limit, get user(%s, host:%s)buckets failed: %s\n", user, host, err.Error())
+		h.next.ServeHTTP(res, req)
+		return
 	}
 
-	allow, err := h.limiter.Allow(context.TODO(),
-		account, redis_rate.Limit{
-			Rate: bucket.Rate, Burst: bucket.Cap, Period: time.Second,
-		})
-
-	if err != nil {
-		// todo: handle this redis error
-		fmt.Printf("rate limit allow error:%s\n", err.Error())
+	if bucket.Rate == 0 || bucket.Cap == 0 {
+		h.Infof("rate-limit, user:%s, have no request rate limit")
 	} else {
-		fmt.Printf("rate-limit: allow:%d, limit:%d, remaining:%d\n", allow.Allowed, allow.Limit, allow.Remaining)
+		var allow *redis_rate.Result
+
+		if allow, err = h.limiter.Allow(context.TODO(), user,
+			redis_rate.Limit{Rate: bucket.Rate, Burst: bucket.Cap, Period: time.Second}); err != nil {
+			// todo: handle this redis error
+			h.Warnf("rate-limit, user:%s, host:%s, error:%s\n", user, host, err.Error())
+			h.next.ServeHTTP(res, req)
+			return
+		}
+
+		h.Infof("rate-limit, user:%s, host:%s, allow:%d, limit-burst:%d, limit-rate:%d, remaining:%d",
+			user, host, allow.Allowed, allow.Limit.Burst, allow.Limit.Rate, allow.Remaining)
 
 		if allow.Allowed < 1 {
+			message := fmt.Sprintf("account:%s,url:%s,request is limited,retry after:%.2f(seconds)\n",
+				user, req.URL.String(),
+				allow.RetryAfter.Seconds())
 			res.WriteHeader(http.StatusForbidden)
-			_, _ = res.Write([]byte(fmt.Sprintf("account:%s, url:%s, rate limit was triggered",
-				account, req.URL.String())))
+			h.Warnf(message)
+			_, _ = res.Write([]byte(message))
 			return
 		}
 	}
@@ -64,36 +105,112 @@ func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request)
 	h.next.ServeHTTP(res, req)
 }
 
-func (h *RateLimitHandler) getBucket(user string) *Bucket {
-	h.mux.RLock()
-	defer h.mux.RUnlock()
-	b, isok := h.userbackets[user]
+func (h *RateLimitHandler) getBucket(user string) (*Bucket, error) {
+	// todo: use h.userbuckets as buckets cache,
+	//  and refresh it periodically
+	var bucket *Bucket
+	var err error
+	var isok bool
 
-	if !isok {
-		return nil
+	h.mux.RLock()
+	bucket, isok = h.userbuckets[user]
+	h.mux.RUnlock()
+
+	if isok {
+		return &(*bucket), nil
 	}
 
-	return &(*b)
+	if bucket, err = h.finder.UserBucket(user); err != nil {
+		return nil, err
+	}
+
+	// h.mux.Lock()
+	// h.userbuckets[bucket.Account] = bucket
+	// h.mux.Unlock()
+	return bucket, nil
 }
 
-func (h *RateLimitHandler) upsertBucket(bucket *Bucket) {
+func (h *RateLimitHandler) StartRefreshBuckets() (closer func(), alreadyRunning bool) {
 	h.mux.Lock()
 	defer h.mux.Unlock()
-	b, isok := h.userbackets[bucket.Account]
-	if !isok {
-		b = &Bucket{Account: bucket.Account}
-		h.userbackets[bucket.Account] = b
+	if h.refreshTaskRunning {
+		alreadyRunning = true
+		return
 	}
-	b.Cap, b.Rate = bucket.Cap, bucket.Rate
+	h.refreshTaskRunning = true
+	timer := time.NewTimer(time.Minute)
+	ch := make(chan interface{}, 1)
+	go func() {
+		for {
+			select {
+			case <-timer.C:
+				refreshTime := time.Now().Format("YY:HH:MM-mm:hh:ss")
+				if err := h.refreshBuckets(); err != nil {
+					h.Errorf("refresh user buckets(at:%s) failed:%s\n", refreshTime, err.Error())
+					break
+				}
+				h.Infof("refresh user buckets at:%s, success!", refreshTime)
+
+			case <-ch:
+				h.refreshTaskRunning = false
+				return
+			}
+		}
+	}()
+	return func() { close(ch) }, false
+}
+
+func (h *RateLimitHandler) refreshBuckets() error {
+	buckets, err := h.finder.ListUserBuckets()
+	if err != nil {
+		return err
+	}
+	userBuckets := make(map[string]*Bucket, len(buckets))
+	for _, b := range buckets {
+		userBuckets[b.Account] = b
+	}
+
+	h.mux.Lock()
+	h.userbuckets = userBuckets
+	h.mux.Unlock()
+
+	return nil
+}
+
+func (authMux *RateLimitHandler) Warnf(template string, args ...interface{}) {
+	if authMux.ILoger == nil {
+		fmt.Printf("auth-middware warning:%s", fmt.Sprintf(template, args...))
+		return
+	}
+	authMux.ILoger.Warnf(template, args...)
+}
+
+func (authMux *RateLimitHandler) Infof(template string, args ...interface{}) {
+	if authMux.ILoger == nil {
+		fmt.Printf("auth-midware info:%s", fmt.Sprintf(template, args...))
+		return
+	}
+	authMux.ILoger.Infof(template, args...)
+}
+
+func (authMux *RateLimitHandler) Errorf(template string, args ...interface{}) {
+	if authMux.ILoger == nil {
+		fmt.Printf("auth-midware error:%s", fmt.Sprintf(template, args...))
+		return
+	}
+	authMux.ILoger.Errorf(template, args...)
 }
 
 var _ = (http.Handler)((*RateLimitHandler)(nil))
 
-type FnListAccountBuckets func() ([]*Bucket, error)
-
-func NewRateLimitHandler(redisEndPoint string, next http.Handler, fnAccFromCtx FnAccFromCtx) (*RateLimitHandler, error) {
+func NewRateLimitHandler(redisEndPoint string, next http.Handler,
+	valueFromCtx IValueFromCtx, finder IBucketsFinder, loger ILoger) (*RateLimitHandler, error) {
 	if next == nil {
-		return nil, fmt.Errorf("listBuckets and next.ServerHTTP is required")
+		return nil, fmt.Errorf("next.ServerHTTP is required")
+	}
+
+	if finder == nil || valueFromCtx == nil {
+		return nil, fmt.Errorf("fnAccFromCtx and fnListBuckets is required")
 	}
 
 	ctx := context.Background()
@@ -105,9 +222,12 @@ func NewRateLimitHandler(redisEndPoint string, next http.Handler, fnAccFromCtx F
 	if err := rdb.FlushDB(ctx).Err(); err != nil {
 		return nil, err
 	}
-	h := &RateLimitHandler{limiter: redis_rate.NewLimiter(rdb),
-		fnAccFromCtx: fnAccFromCtx,
-		userbackets:  make(map[string]*Bucket), next: next}
+	h := &RateLimitHandler{
+		ILoger:        loger,
+		IValueFromCtx: valueFromCtx,
+		finder:        finder,
+		limiter:       redis_rate.NewLimiter(rdb),
+		userbuckets:   make(map[string]*Bucket), next: next}
 
 	return h, nil
 }
