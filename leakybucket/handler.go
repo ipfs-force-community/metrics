@@ -76,7 +76,7 @@ func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request)
 	}
 
 	if bucket.Rate == 0 || bucket.Cap == 0 {
-		h.Infof("rate-limit, user:%s, have no request rate limit")
+		h.Infof("rate-limit, user:%s, have no request rate limit", bucket.Account)
 	} else {
 		var allow *redis_rate.Result
 
