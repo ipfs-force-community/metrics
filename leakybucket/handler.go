@@ -139,6 +139,7 @@ func (h *RateLimitHandler) getBucket(user string) (*Bucket, error) {
 		cache.Bucket = *bucket
 	} else {
 		cache = &CachedBuckets{Bucket: *bucket}
+		h.cachedBuckets[cache.Account] = cache
 	}
 
 	cache.expire = time.Now().Add(time.Minute)
