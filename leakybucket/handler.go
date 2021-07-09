@@ -249,7 +249,7 @@ func NewRateLimitHandler(redisEndPoint string, next http.Handler,
 		IValueFromCtx: valueFromCtx,
 		finder:        finder,
 		limiter:       redis_rate.NewLimiter(rdb),
-		cachedBuckets: make(map[string]*Bucket), next: next}
+		cachedBuckets: make(map[string]*CachedBuckets), next: next}
 
 	return h, nil
 }
