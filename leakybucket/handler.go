@@ -16,6 +16,15 @@ type Bucket struct {
 	Rate, Cap int
 }
 
+type CachedBuckets struct {
+	Bucket
+	expire time.Time
+}
+
+func (cb *CachedBuckets) expired() bool {
+	return time.Now().Before(cb.expire)
+}
+
 type IBucketsFinder interface {
 	UserBucket(string) (*Bucket, error)
 	ListUserBuckets() ([]*Bucket, error)
@@ -42,11 +51,11 @@ type ILoger interface {
 type RateLimitHandler struct {
 	ILoger
 	IValueFromCtx
-	limiter     *redis_rate.Limiter
-	userbuckets map[string]*Bucket
-	mux         sync.RWMutex
-	next        http.Handler
-	finder      IBucketsFinder
+	limiter       *redis_rate.Limiter
+	cachedBuckets map[string]*CachedBuckets
+	mux           sync.RWMutex
+	next          http.Handler
+	finder        IBucketsFinder
 
 	refreshTaskRunning bool
 }
@@ -106,30 +115,39 @@ func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request)
 }
 
 func (h *RateLimitHandler) getBucket(user string) (*Bucket, error) {
-	// todo: use h.userbuckets as buckets cache,
-	//  and refresh it periodically
-	var bucket *Bucket
+	var cache *CachedBuckets
 	var err error
 	var isok bool
+	var bucket *Bucket
 
 	h.mux.RLock()
-	bucket, isok = h.userbuckets[user]
+	cache, isok = h.cachedBuckets[user]
 	h.mux.RUnlock()
 
-	if isok {
-		return &(*bucket), nil
+	if isok && !cache.expired() {
+		return &(*(&cache.Bucket)), nil
 	}
 
+	// todo: may updated in multi-goroutine at the same time,
+	//  but it's acceptable, have better approach?
 	if bucket, err = h.finder.UserBucket(user); err != nil {
 		return nil, err
 	}
 
-	// h.mux.Lock()
-	// h.userbuckets[bucket.Account] = bucket
-	// h.mux.Unlock()
+	h.mux.Lock()
+	if isok {
+		cache.Bucket = *bucket
+	} else {
+		cache = &CachedBuckets{Bucket: *bucket}
+	}
+
+	cache.expire = time.Now().Add(time.Minute)
+	h.mux.Unlock()
+
 	return bucket, nil
 }
 
+// deprecated..getBucket task a better way to updating user buckets.
 func (h *RateLimitHandler) StartRefreshBuckets() (closer func(), alreadyRunning bool) {
 	h.mux.Lock()
 	defer h.mux.Unlock()
@@ -165,13 +183,16 @@ func (h *RateLimitHandler) refreshBuckets() error {
 	if err != nil {
 		return err
 	}
-	userBuckets := make(map[string]*Bucket, len(buckets))
+	userBuckets := make(map[string]*CachedBuckets, len(buckets))
 	for _, b := range buckets {
-		userBuckets[b.Account] = b
+		userBuckets[b.Account] = &CachedBuckets{
+			Bucket: *b,
+			expire: time.Now().Add(time.Minute),
+		}
 	}
 
 	h.mux.Lock()
-	h.userbuckets = userBuckets
+	h.cachedBuckets = userBuckets
 	h.mux.Unlock()
 
 	return nil
@@ -227,7 +248,7 @@ func NewRateLimitHandler(redisEndPoint string, next http.Handler,
 		IValueFromCtx: valueFromCtx,
 		finder:        finder,
 		limiter:       redis_rate.NewLimiter(rdb),
-		userbuckets:   make(map[string]*Bucket), next: next}
+		cachedBuckets: make(map[string]*Bucket), next: next}
 
 	return h, nil
 }
