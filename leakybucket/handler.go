@@ -1,14 +1,14 @@
 package leakybucket
 
 import (
-	"net/http"
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
-	"github.com/go-redis/redis/v8"
-	"github.com/go-redis/redis_rate/v9"
+	"github.com/go-redis/redis/v7"
+	"github.com/go-redis/redis_rate/v7"
 )
 
 type Bucket struct {
@@ -16,9 +16,15 @@ type Bucket struct {
 	Rate, Cap int
 }
 
-type IBucketsFinder interface {
-	UserBucket(string) (*Bucket, error)
-	ListUserBuckets() ([]*Bucket, error)
+type Limit struct {
+	Account  string
+	Cap      int64
+	Duration time.Duration
+}
+
+type ILimitFinder interface {
+	GetUserLimit(string) (*Limit, error)
+	ListUserLimits() ([]*Limit, error)
 }
 
 type IValueFromCtx interface {
@@ -42,11 +48,11 @@ type ILoger interface {
 type RateLimitHandler struct {
 	ILoger
 	IValueFromCtx
-	limiter     *redis_rate.Limiter
-	userbuckets map[string]*Bucket
-	mux         sync.RWMutex
-	next        http.Handler
-	finder      IBucketsFinder
+	limiter   *redis_rate.Limiter
+	userLimit map[string]*Limit
+	mux       sync.RWMutex
+	next      http.Handler
+	finder    ILimitFinder
 
 	refreshTaskRunning bool
 }
@@ -67,67 +73,45 @@ func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	var bucket, err = h.getBucket(user)
+	var limit, err = h.getUserLimit(user)
 	if err != nil {
 		// todo: response error?
-		h.Warnf("rate-limit, get user(%s, host:%s)buckets failed: %s\n", user, host, err.Error())
+		h.Warnf("rate-limit, get user(%s, host:%s)limit failed: %s\n", user, host, err.Error())
 		h.next.ServeHTTP(res, req)
 		return
 	}
 
-	if bucket.Rate == 0 || bucket.Cap == 0 {
-		h.Infof("rate-limit, user:%s, have no request rate limit", bucket.Account)
+	if limit.Cap == 0 {
+		h.Infof("rate-limit, user:%s, have no request rate limit", limit.Account)
 	} else {
-		var allow *redis_rate.Result
+		used, resetDur, allow := h.limiter.Allow(user, limit.Cap, limit.Duration)
+		if allow {
+			h.Infof("rate-limit, user:%s, host:%s, cap=%resetDur, used=%resetDur, recover_duration=%.2f(seconds)",
+				user, host, limit.Cap, used, resetDur.Seconds())
+		} else {
+			if used == 0 {
+				h.Warnf("rate-limit check if redis-service is on, the request-limit: cap=%resetDur, used=%resetDur, but returned allow is 'false'")
+			} else {
+				h.Warnf("rate-limit, user:%s, host:%s request is limited, cap=%resetDur, used=%resetDur, recover_duration=%.2f(seconds)",
+					user, host, limit.Cap, used, resetDur.Hours())
 
-		if allow, err = h.limiter.Allow(context.TODO(), user,
-			redis_rate.Limit{Rate: bucket.Rate, Burst: bucket.Cap, Period: time.Second}); err != nil {
-			// todo: handle this redis error
-			h.Warnf("rate-limit, user:%s, host:%s, error:%s\n", user, host, err.Error())
-			h.next.ServeHTTP(res, req)
-			return
+				if err = rpcError(res, user, host, limit.Cap, used, resetDur); err != nil {
+					_, _ = res.Write([]byte(err.Error()))
+				}
+
+				res.WriteHeader(http.StatusForbidden)
+				return
+			}
 		}
 
-		h.Infof("rate-limit, user:%s, host:%s, allow:%d, limit-burst:%d, limit-rate:%d, remaining:%d",
-			user, host, allow.Allowed, allow.Limit.Burst, allow.Limit.Rate, allow.Remaining)
-
-		if allow.Allowed < 1 {
-			message := fmt.Sprintf("account:%s,url:%s,request is limited,retry after:%.2f(seconds)\n",
-				user, req.URL.String(),
-				allow.RetryAfter.Seconds())
-			res.WriteHeader(http.StatusForbidden)
-			h.Warnf(message)
-			_, _ = res.Write([]byte(message))
-			return
-		}
 	}
 
 	h.next.ServeHTTP(res, req)
 }
 
-func (h *RateLimitHandler) getBucket(user string) (*Bucket, error) {
-	// todo: use h.userbuckets as buckets cache,
-	//  and refresh it periodically
-	var bucket *Bucket
-	var err error
-	var isok bool
-
-	h.mux.RLock()
-	bucket, isok = h.userbuckets[user]
-	h.mux.RUnlock()
-
-	if isok {
-		return &(*bucket), nil
-	}
-
-	if bucket, err = h.finder.UserBucket(user); err != nil {
-		return nil, err
-	}
-
-	// h.mux.Lock()
-	// h.userbuckets[bucket.Account] = bucket
-	// h.mux.Unlock()
-	return bucket, nil
+func (h *RateLimitHandler) getUserLimit(user string) (*Limit, error) {
+	// todo: use h.userLimit as cache, and refresh it periodically
+	return h.finder.GetUserLimit(user)
 }
 
 func (h *RateLimitHandler) StartRefreshBuckets() (closer func(), alreadyRunning bool) {
@@ -161,17 +145,17 @@ func (h *RateLimitHandler) StartRefreshBuckets() (closer func(), alreadyRunning 
 }
 
 func (h *RateLimitHandler) refreshBuckets() error {
-	buckets, err := h.finder.ListUserBuckets()
+	limits, err := h.finder.ListUserLimits()
 	if err != nil {
 		return err
 	}
-	userBuckets := make(map[string]*Bucket, len(buckets))
-	for _, b := range buckets {
-		userBuckets[b.Account] = b
+	userLimits := make(map[string]*Limit, len(limits))
+	for _, b := range limits {
+		userLimits[b.Account] = b
 	}
 
 	h.mux.Lock()
-	h.userbuckets = userBuckets
+	h.userLimit = userLimits
 	h.mux.Unlock()
 
 	return nil
@@ -204,7 +188,7 @@ func (authMux *RateLimitHandler) Errorf(template string, args ...interface{}) {
 var _ = (http.Handler)((*RateLimitHandler)(nil))
 
 func NewRateLimitHandler(redisEndPoint string, next http.Handler,
-	valueFromCtx IValueFromCtx, finder IBucketsFinder, loger ILoger) (*RateLimitHandler, error) {
+	valueFromCtx IValueFromCtx, finder ILimitFinder, loger ILoger) (*RateLimitHandler, error) {
 	if next == nil {
 		return nil, fmt.Errorf("next.ServerHTTP is required")
 	}
@@ -213,21 +197,17 @@ func NewRateLimitHandler(redisEndPoint string, next http.Handler,
 		return nil, fmt.Errorf("fnAccFromCtx and fnListBuckets is required")
 	}
 
-	ctx := context.Background()
-
-	rdb := redis.NewClient(&redis.Options{
-		Addr: redisEndPoint,
-	})
-
-	if err := rdb.FlushDB(ctx).Err(); err != nil {
-		return nil, err
-	}
 	h := &RateLimitHandler{
 		ILoger:        loger,
 		IValueFromCtx: valueFromCtx,
 		finder:        finder,
-		limiter:       redis_rate.NewLimiter(rdb),
-		userbuckets:   make(map[string]*Bucket), next: next}
+		userLimit:     make(map[string]*Limit),
+		next:          next,
+		limiter: redis_rate.NewLimiter(
+			redis.NewRing(&redis.RingOptions{
+				Addrs: map[string]string{"server1": redisEndPoint},
+			}),
+		)}
 
 	return h, nil
 }
