@@ -86,19 +86,17 @@ func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request)
 	} else {
 		used, resetDur, allow := h.limiter.Allow(user, limit.Cap, limit.Duration)
 		if allow {
-			h.Infof("rate-limit, user:%s, host:%s, cap=%resetDur, used=%resetDur, recover_duration=%.2f(seconds)",
-				user, host, limit.Cap, used, resetDur.Seconds())
+			h.Infof("rate-limit, user=%s, host=%s, cap=%d, used=%d, will reset in %.2f(m)",
+				user, host, limit.Cap, used, resetDur.Minutes())
 		} else {
 			if used == 0 {
-				h.Warnf("rate-limit check if redis-service is on, the request-limit: cap=%resetDur, used=%resetDur, but returned allow is 'false'")
+				h.Warnf("rate-limit,please check if redis-service is on,request-limit:cap=%d,used=%d, but returned allow is 'false'")
 			} else {
-				h.Warnf("rate-limit, user:%s, host:%s request is limited, cap=%resetDur, used=%resetDur, recover_duration=%.2f(seconds)",
-					user, host, limit.Cap, used, resetDur.Hours())
-
+				h.Warnf("rate-limit,user:%s, host:%s request is limited, cap=%d, used=%d,will reset in %.2f(m)",
+					user, host, limit.Cap, used, resetDur.Minutes())
 				if err = rpcError(res, user, host, limit.Cap, used, resetDur); err != nil {
 					_, _ = res.Write([]byte(err.Error()))
 				}
-
 				res.WriteHeader(http.StatusForbidden)
 				return
 			}

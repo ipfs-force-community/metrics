@@ -30,8 +30,8 @@ func rpcError(w http.ResponseWriter, user, host string, cap, used int64, recover
 	resp := response{
 		Jsonrpc: "2.0",
 		Error: &respError{
-			Message: fmt.Sprintf("user(%s, %s), request is limted, cap:%s, used:%s, will recover in :%.2f",
-				user, host, cap, used, recoverDur.Hours()),
+			Message: fmt.Sprintf("user(%s, %s), request is limted, cap:%d, used:%d, will reset in :%.2f(m)",
+				user, host, cap, used, recoverDur.Minutes()),
 		},
 	}
 	return json.NewEncoder(w).Encode(resp)
