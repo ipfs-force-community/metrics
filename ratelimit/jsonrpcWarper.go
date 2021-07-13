@@ -7,7 +7,7 @@ import (
 	"reflect"
 )
 
-func (h *RateLimiter) JSONRPCProxyInject(in interface{}, out interface{}) {
+func (h *RateLimiter) WarperLimiter(in interface{}, out interface{}) {
 	vin := reflect.ValueOf(in)
 	rout := reflect.ValueOf(out).Elem()
 
@@ -15,7 +15,7 @@ func (h *RateLimiter) JSONRPCProxyInject(in interface{}, out interface{}) {
 		method := vin.Type().Field(i).Name
 
 		if vin.Field(i).Type().Kind() == reflect.Struct {
-			h.JSONRPCProxyInject(vin.Field(i).Interface(), out)
+			h.WarperLimiter(vin.Field(i).Interface(), out)
 			continue
 		}
 

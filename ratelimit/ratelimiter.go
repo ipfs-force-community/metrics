@@ -32,8 +32,8 @@ type IValueFromCtx interface {
 	HostFromCtx(context.Context) (string, bool)
 }
 
-type IJsonRPCInjecter interface {
-	JSONRPCProxyInject(template interface{}, out interface{})
+type IJSONRPCLimiterWarper interface {
+	WarperLimiter(template interface{}, out interface{})
 }
 
 type FnAccFromCtx func(context.Context) (string, bool)
@@ -194,7 +194,7 @@ func (authMux *RateLimiter) Errorf(template string, args ...interface{}) {
 }
 
 var _ = (http.Handler)((*RateLimiter)(nil))
-var _ = (IJsonRPCInjecter)((*RateLimiter)(nil))
+var _ = (IJSONRPCLimiterWarper)((*RateLimiter)(nil))
 
 func NewRateLimitHandler(redisEndPoint string, next http.Handler,
 	valueFromCtx IValueFromCtx, finder ILimitFinder, loger ILoger) (*RateLimiter, error) {
