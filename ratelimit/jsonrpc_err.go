@@ -1,4 +1,4 @@
-package leakybucket
+package ratelimit
 
 import (
 	"encoding/json"

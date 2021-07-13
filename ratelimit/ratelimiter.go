@@ -1,4 +1,4 @@
-package leakybucket
+package ratelimit
 
 import (
 	"context"
@@ -32,6 +32,10 @@ type IValueFromCtx interface {
 	HostFromCtx(context.Context) (string, bool)
 }
 
+type IJsonRPCInjecter interface {
+	JSONRPCProxyInject(template interface{}, out interface{})
+}
+
 type FnAccFromCtx func(context.Context) (string, bool)
 
 type ILoger interface {
@@ -45,7 +49,7 @@ type ILoger interface {
 	Debugf(template string, args ...interface{})
 }
 
-type RateLimitHandler struct {
+type RateLimiter struct {
 	ILoger
 	IValueFromCtx
 	limiter   *redis_rate.Limiter
@@ -57,7 +61,13 @@ type RateLimitHandler struct {
 	refreshTaskRunning bool
 }
 
-func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
+func (h *RateLimiter) ServeHTTP(res http.ResponseWriter, req *http.Request) {
+	if h.next == nil {
+		http.NotFound(res, req)
+		h.Warnf("rate limit next handler is nil")
+		return
+	}
+
 	if h.IValueFromCtx == nil { // todo: response error?
 		h.next.ServeHTTP(res, req)
 		return
@@ -107,12 +117,12 @@ func (h *RateLimitHandler) ServeHTTP(res http.ResponseWriter, req *http.Request)
 	h.next.ServeHTTP(res, req)
 }
 
-func (h *RateLimitHandler) getUserLimit(user string) (*Limit, error) {
+func (h *RateLimiter) getUserLimit(user string) (*Limit, error) {
 	// todo: use h.userLimit as cache, and refresh it periodically
 	return h.finder.GetUserLimit(user)
 }
 
-func (h *RateLimitHandler) StartRefreshBuckets() (closer func(), alreadyRunning bool) {
+func (h *RateLimiter) StartRefreshBuckets() (closer func(), alreadyRunning bool) {
 	h.mux.Lock()
 	defer h.mux.Unlock()
 	if h.refreshTaskRunning {
@@ -142,7 +152,7 @@ func (h *RateLimitHandler) StartRefreshBuckets() (closer func(), alreadyRunning 
 	return func() { close(ch) }, false
 }
 
-func (h *RateLimitHandler) refreshBuckets() error {
+func (h *RateLimiter) refreshBuckets() error {
 	limits, err := h.finder.ListUserLimits()
 	if err != nil {
 		return err
@@ -159,7 +169,7 @@ func (h *RateLimitHandler) refreshBuckets() error {
 	return nil
 }
 
-func (authMux *RateLimitHandler) Warnf(template string, args ...interface{}) {
+func (authMux *RateLimiter) Warnf(template string, args ...interface{}) {
 	if authMux.ILoger == nil {
 		fmt.Printf("auth-middware warning:%s", fmt.Sprintf(template, args...))
 		return
@@ -167,7 +177,7 @@ func (authMux *RateLimitHandler) Warnf(template string, args ...interface{}) {
 	authMux.ILoger.Warnf(template, args...)
 }
 
-func (authMux *RateLimitHandler) Infof(template string, args ...interface{}) {
+func (authMux *RateLimiter) Infof(template string, args ...interface{}) {
 	if authMux.ILoger == nil {
 		fmt.Printf("auth-midware info:%s", fmt.Sprintf(template, args...))
 		return
@@ -175,7 +185,7 @@ func (authMux *RateLimitHandler) Infof(template string, args ...interface{}) {
 	authMux.ILoger.Infof(template, args...)
 }
 
-func (authMux *RateLimitHandler) Errorf(template string, args ...interface{}) {
+func (authMux *RateLimiter) Errorf(template string, args ...interface{}) {
 	if authMux.ILoger == nil {
 		fmt.Printf("auth-midware error:%s", fmt.Sprintf(template, args...))
 		return
@@ -183,19 +193,17 @@ func (authMux *RateLimitHandler) Errorf(template string, args ...interface{}) {
 	authMux.ILoger.Errorf(template, args...)
 }
 
-var _ = (http.Handler)((*RateLimitHandler)(nil))
+var _ = (http.Handler)((*RateLimiter)(nil))
+var _ = (IJsonRPCInjecter)((*RateLimiter)(nil))
 
 func NewRateLimitHandler(redisEndPoint string, next http.Handler,
-	valueFromCtx IValueFromCtx, finder ILimitFinder, loger ILoger) (*RateLimitHandler, error) {
-	if next == nil {
-		return nil, fmt.Errorf("next.ServerHTTP is required")
-	}
+	valueFromCtx IValueFromCtx, finder ILimitFinder, loger ILoger) (*RateLimiter, error) {
 
 	if finder == nil || valueFromCtx == nil {
 		return nil, fmt.Errorf("fnAccFromCtx and fnListBuckets is required")
 	}
 
-	h := &RateLimitHandler{
+	h := &RateLimiter{
 		ILoger:        loger,
 		IValueFromCtx: valueFromCtx,
 		finder:        finder,
