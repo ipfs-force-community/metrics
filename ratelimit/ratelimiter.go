@@ -23,8 +23,7 @@ type Limit struct {
 }
 
 type ILimitFinder interface {
-	GetUserLimit(string) (*Limit, error)
-	ListUserLimits() ([]*Limit, error)
+	GetUserLimit(user, service, api string) (*Limit, error)
 }
 
 type IValueFromCtx interface {
@@ -83,7 +82,7 @@ func (h *RateLimiter) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var limit, err = h.getUserLimit(user)
+	var limit, err = h.getUserLimit(user, "", "")
 	if err != nil {
 		// todo: response error?
 		h.Warnf("rate-limit, get user(%s, host:%s)limit failed: %s\n", user, host, err.Error())
@@ -117,9 +116,9 @@ func (h *RateLimiter) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	h.next.ServeHTTP(res, req)
 }
 
-func (h *RateLimiter) getUserLimit(user string) (*Limit, error) {
+func (h *RateLimiter) getUserLimit(user, service, api string) (*Limit, error) {
 	// todo: use h.userLimit as cache, and refresh it periodically
-	return h.finder.GetUserLimit(user)
+	return h.finder.GetUserLimit(user, service, api)
 }
 
 func (h *RateLimiter) StartRefreshBuckets() (closer func(), alreadyRunning bool) {
@@ -153,19 +152,7 @@ func (h *RateLimiter) StartRefreshBuckets() (closer func(), alreadyRunning bool)
 }
 
 func (h *RateLimiter) refreshBuckets() error {
-	limits, err := h.finder.ListUserLimits()
-	if err != nil {
-		return err
-	}
-	userLimits := make(map[string]*Limit, len(limits))
-	for _, b := range limits {
-		userLimits[b.Account] = b
-	}
-
-	h.mux.Lock()
-	h.userLimit = userLimits
-	h.mux.Unlock()
-
+	// todo : implement this
 	return nil
 }
 

@@ -43,7 +43,7 @@ func (h *RateLimiter) WarperLimiter(in interface{}, out interface{}) {
 				return
 			}
 
-			var limit, err = h.getUserLimit(user)
+			var limit, err = h.getUserLimit(user, "", "")
 			if err != nil {
 				// todo: response error?
 				h.Warnf("rate-limit, get user(user=%s, host=%s, method=%s)limit failed: %s\n", user, host, method, err.Error())
