@@ -39,16 +39,14 @@ func (h *RateLimiter) WarperLimiter(in interface{}, out interface{}) {
 			if !isok { // todo: response error?
 				h.Warnf("rate-limit, get user(host=%s, method=%s) failed: can't find an 'account' key\n",
 					host, method)
-				fn.Call(args)
-				return
+				return fn.Call(args)
 			}
 
 			var limit, err = h.getUserLimit(user, "", "")
 			if err != nil {
 				// todo: response error?
 				h.Warnf("rate-limit, get user(user=%s, host=%s, method=%s)limit failed: %s\n", user, host, method, err.Error())
-				fn.Call(args)
-				return
+				return fn.Call(args)
 			}
 
 			if limit.Cap == 0 {
@@ -70,10 +68,8 @@ func (h *RateLimiter) WarperLimiter(in interface{}, out interface{}) {
 						goto ABORT
 					}
 				}
-
 			}
 			return fn.Call(args)
-
 		ABORT:
 			rerr := reflect.ValueOf(&err).Elem()
 			if fn.Type().NumOut() == 2 {
