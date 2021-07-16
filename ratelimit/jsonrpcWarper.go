@@ -127,14 +127,10 @@ func (h *RateLimiter) WarpFunctions(in interface{}, out interface{}) {
 
 	for i := 0; i < vinType.NumMethod(); i++ {
 		method := vinType.Method(i).Name
-		fmt.Printf("method:%s\n", method)
 
 		field, exists := vOut.Type().FieldByName(method)
 
 		if !exists || field.Type.Kind() != reflect.Func {
-			if exists {
-				fmt.Printf("kind :%s\n", field.Type.Kind().String())
-			}
 			continue
 		}
 
