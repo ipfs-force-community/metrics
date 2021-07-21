@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.opencensus.io/trace"
 	"reflect"
 )
 
@@ -12,6 +13,14 @@ func (h *RateLimiter) callProxy(fname string, fn reflect.Value, args []reflect.V
 
 	host, _ := h.HostFromCtx(ctx)
 	user, isok := h.AccFromCtx(ctx)
+
+	span := trace.FromContext(ctx)
+	if span == nil {
+		ctx, span = trace.StartSpan(ctx, "api.handle")
+	}
+	fmt.Printf("spanid:%s\n", span.SpanContext().SpanID)
+
+	span.AddAttributes(trace.StringAttribute("Account", user))
 
 	if !isok { // todo: response error?
 		h.Warnf("rate-limit, get user(host=%s, method=%s) failed: can't find an 'account' key\n",
@@ -23,6 +32,7 @@ func (h *RateLimiter) callProxy(fname string, fn reflect.Value, args []reflect.V
 	if err != nil {
 		// todo: response error?
 		h.Warnf("rate-limit, get user(user=%s, host=%s, method=%s)limit failed: %s\n", user, host, fname, err.Error())
+
 		return fn.Call(args)
 	}
 
