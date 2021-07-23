@@ -19,7 +19,7 @@ func (h *RateLimiter) callProxy(fname string, fn reflect.Value, args []reflect.V
 		ctx, span = trace.StartSpan(ctx, "api.handle")
 	}
 
-	span.AddAttributes(trace.StringAttribute("Account", user))
+	span.AddAttributes(trace.StringAttribute("account", user))
 
 	if !isok { // todo: response error?
 		h.Warnf("rate-limit, get user(host=%s, method=%s) failed: can't find an 'account' key\n",
