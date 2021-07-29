@@ -6,8 +6,8 @@ require (
 	contrib.go.opencensus.io/exporter/jaeger v0.2.1
 	contrib.go.opencensus.io/exporter/prometheus v0.3.0
 	github.com/go-redis/redis v6.15.9+incompatible
-	github.com/go-redis/redis/v7 v7.0.0-beta
-	github.com/go-redis/redis_rate/v7 v7.0.1
+	github.com/go-redis/redis/v8 v8.3.4
+	github.com/go-redis/redis_rate/v9 v9.1.1
 	github.com/google/go-cmp v0.5.6 // indirect
 	github.com/gorilla/mux v1.7.3
 	github.com/multiformats/go-multiaddr v0.3.3

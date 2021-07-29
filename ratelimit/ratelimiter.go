@@ -6,9 +6,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"github.com/go-redis/redis/v7"
-	"github.com/go-redis/redis_rate/v7"
+	"github.com/go-redis/redis/v8"
+	"github.com/go-redis/redis_rate/v9"
 )
 
 type Bucket struct {
@@ -56,6 +55,7 @@ type RateLimiter struct {
 	mux       sync.RWMutex
 	next      http.Handler
 	finder    ILimitFinder
+	rdb       *redis.Client
 
 	refreshTaskRunning bool
 }
@@ -93,24 +93,29 @@ func (h *RateLimiter) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	if limit.Cap == 0 {
 		h.Infof("rate-limit, user:%s, have no request rate limit", limit.Account)
 	} else {
-		used, resetDur, allow := h.limiter.Allow(user, limit.Cap, limit.Duration)
-		if allow {
+		lres, err := h.limiter.Allow(context.TODO(), user, redis_rate.Limit{
+			Rate: int(limit.Cap), Period: limit.Duration, Burst: -1})
+
+		if err != nil {
+			// todo: what should i do?
+		}
+
+		if lres.Allowed == 1 {
 			h.Infof("rate-limit, user=%s, host=%s, cap=%d, used=%d, will reset in %.2f(m)",
-				user, host, limit.Cap, used, resetDur.Minutes())
+				user, host, limit.Cap, lres.Remaining, lres.ResetAfter.Minutes())
 		} else {
-			if used == 0 {
+			if lres.Remaining > 0 {
 				h.Warnf("rate-limit,please check if redis-service is on,request-limit:cap=%d,used=%d, but returned allow is 'false'")
 			} else {
 				h.Warnf("rate-limit,user:%s, host:%s request is limited, cap=%d, used=%d,will reset in %.2f(m)",
-					user, host, limit.Cap, used, resetDur.Minutes())
-				if err = rpcError(res, user, host, limit.Cap, used, resetDur); err != nil {
+					user, host, limit.Cap, lres.Remaining, lres.ResetAfter.Minutes())
+				if err = rpcError(res, user, host, limit.Cap, int64(lres.Remaining), lres.ResetAfter); err != nil {
 					_, _ = res.Write([]byte(err.Error()))
 				}
 				res.WriteHeader(http.StatusForbidden)
 				return
 			}
 		}
-
 	}
 
 	h.next.ServeHTTP(res, req)
@@ -183,24 +188,26 @@ func (authMux *RateLimiter) Errorf(template string, args ...interface{}) {
 var _ = (http.Handler)((*RateLimiter)(nil))
 var _ = (IJSONRPCLimiterWarper)((*RateLimiter)(nil))
 
-func NewRateLimitHandler(redisEndPoint string, next http.Handler,
+func NewRateLimiter(redisEndPoint string, next http.Handler,
 	valueFromCtx IValueFromCtx, finder ILimitFinder, loger ILoger) (*RateLimiter, error) {
 
 	if finder == nil || valueFromCtx == nil {
 		return nil, fmt.Errorf("fnAccFromCtx and fnListBuckets is required")
 	}
 
+	rdb := redis.NewClient(&redis.Options{Addr: redisEndPoint})
+
+	_ = rdb.FlushDB(context.TODO())
+
 	h := &RateLimiter{
 		ILoger:        loger,
 		IValueFromCtx: valueFromCtx,
-		finder:        finder,
-		userLimit:     make(map[string]*Limit),
-		next:          next,
-		limiter: redis_rate.NewLimiter(
-			redis.NewRing(&redis.RingOptions{
-				Addrs: map[string]string{"server1": redisEndPoint},
-			}),
-		)}
+
+		finder:    finder,
+		userLimit: make(map[string]*Limit),
+		next:      next,
+		rdb:       rdb,
+		limiter:   redis_rate.NewLimiter(rdb)}
 
 	return h, nil
 }

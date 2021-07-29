@@ -1,9 +1,10 @@
 package main
 
 import (
-	"time"
+	"context"
 	"fmt"
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
+	"time"
 )
 
 const (
@@ -11,7 +12,7 @@ const (
 	SUCC
 )
 
-var redisdb *redis.Client
+var rds *redis.Client
 
 var initFunnelScript = `
 	-- 分别初始化漏斗结构的4个字段capacity、left_quota、leaking_rate、leaking_time
@@ -67,24 +68,25 @@ func init() {
 }
 
 func initRedisClient() {
-	redisdb = redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
+	rds = redis.NewClient(&redis.Options{
+		Addr:     "192.168.1.125:6379",
 		Password: "",
 		DB:       0,
 	})
 
 	var err error
-	initFunnelSha, err = redisdb.ScriptLoad(initFunnelScript).Result()
+	var ctx = context.TODO()
+	initFunnelSha, err = rds.ScriptLoad(ctx, initFunnelScript).Result()
 	if err != nil {
 		panic(err)
 	}
 
-	makeSpaceSha, err = redisdb.ScriptLoad(makeSpaceScript).Result()
+	makeSpaceSha, err = rds.ScriptLoad(ctx, makeSpaceScript).Result()
 	if err != nil {
 		panic(err)
 	}
 
-	wateringSha, err = redisdb.ScriptLoad(wateringScript).Result()
+	wateringSha, err = rds.ScriptLoad(ctx, wateringScript).Result()
 	if err != nil {
 		panic(err)
 	}
@@ -92,13 +94,14 @@ func initRedisClient() {
 
 func MakeSpace(key string) {
 	now := time.Now().Unix()
-	redisdb.EvalSha(makeSpaceSha, []string{key}, now).Result()
+	rds.EvalSha(context.TODO(), makeSpaceSha, []string{key}, now).Result()
 }
 
 // quota为每次处理请求所需要的资源配额
 func Watering(key string, quota float64) bool {
 	MakeSpace(key)
-	res, err := redisdb.EvalSha(wateringSha, []string{key}, quota).Result()
+	ctx := context.TODO()
+	res, err := rds.EvalSha(ctx, wateringSha, []string{key}, quota).Result()
 	if err != nil {
 		panic(err)
 	}
@@ -107,12 +110,73 @@ func Watering(key string, quota float64) bool {
 
 func IsActionAllowed(uid, action string, capacity float64, leakingRate float64) bool {
 	key := fmt.Sprintf("%v_%v", uid, action)
-	redisdb.EvalSha(initFunnelSha, []string{key}, "capacity", capacity, "left_quota", capacity, "leaking_rate", leakingRate, "leaking_time", time.Now().Unix())
+	rds.EvalSha(context.TODO(), initFunnelSha, []string{key}, "capacity", capacity, "left_quota", capacity, "leaking_rate", leakingRate, "leaking_time", time.Now().Unix())
 	return Watering(key, 1)
 }
 
 func main() {
+	var luaScriptIncrReqCount = redis.NewScript(`
+redis.replicate_commands()
+	
+local key = KEYS[1]
+
+local interval = tonumber(ARGV[1])
+local keep = tonumber(ARGV[2])
+
+local now = tonumber(redis.call("TIME")[1])
+local size = tonumber(redis.call("llen", key))
+
+if size == 0 then
+	req_count_json = cjson.encode({Ts=now, Count=1})
+	redis.call("rpush", key, req_count_json)
+	return req_count_json
+end	
+
+if (size >= keep) then
+	redis.call("ltrim", key, size-keep+1, -1)
+end
+	
+local req_count_json = redis.call("rpop", key)
+local req_count = cjson.decode(req_count_json)
+local count = tonumber(req_count["Count"])
+local at = req_count["Ts"]	
+
+if ((now - at) < interval) then
+	req_count["Count"] = count + 1	
+	req_count_json = cjson.encode(req_count)
+	redis.call("rpush", key, req_count_json)
+	return req_count_json
+end
+	
+local req_count_json_now = cjson.encode({Ts=now, Count=count+1})
+redis.call("rpush", key, req_count_json, req_count_json_now)
+return {req_count_json, req_count_json_now}
+`)
+	var exit = make(chan interface{})
+	go func() {
+		for i := 0; i < 15; i++ {
+			if val, err := luaScriptIncrReqCount.Run(context.TODO(), rds, []string{"zl"}, 2, 5).Result(); err != nil {
+				fmt.Println(err.Error())
+				return
+			} else {
+				fmt.Println(val)
+			}
+			time.Sleep(time.Second * 3)
+			exit <- 0
+		}
+	}()
+
+	cmd := rds.LPush(context.TODO(), "zl", `{"Count":0, "Ts":1627554920}`)
+	if cmd.Err() != nil {
+		return
+	}
+
+	if err := cmd.Err(); err != nil {
+		fmt.Println(err.Error())
+	}
 	for i := 0; i < 20; i++ {
 		fmt.Printf("%+v\n", IsActionAllowed("berryjam", "reply", 15, 0.5))
 	}
+
+	<-exit
 }

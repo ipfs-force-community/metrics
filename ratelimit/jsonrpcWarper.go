@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/go-redis/redis_rate/v9"
 	"go.opencensus.io/trace"
 	"reflect"
 )
@@ -38,17 +39,21 @@ func (h *RateLimiter) callProxy(fname string, fn reflect.Value, args []reflect.V
 	if limit.Cap == 0 {
 		h.Infof("rate-limit, user=%s, host=%s, method=%s, have no request rate limit", limit.Account, host, fname)
 	} else {
-		used, resetDur, allow := h.limiter.Allow(user, limit.Cap, limit.Duration)
-		if allow {
+		lres, err := h.limiter.Allow(context.TODO(), user, redis_rate.Limit{
+			Rate: int(limit.Cap), Period: limit.Duration, Burst: -1})
+		if err != nil {
+			// todo: what should i do?
+		}
+		if lres.Allowed == 1 {
 			h.Infof("rate-limit, user=%s, host=%s, method=%s, cap=%d, used=%d,reset in %.2f(m)",
-				user, host, fname, limit.Cap, used, resetDur.Minutes())
+				user, host, fname, limit.Cap, lres.Remaining, lres.ResetAfter.Minutes())
 		} else {
-			if used == 0 {
+			if lres.Remaining > 0 {
 				h.Warnf("rate-limit,user=%s, host=%s, method=%s,please check if redis-service is on,request-limit:cap=%d, used=%d, but returned allow is 'false'",
-					user, host, fname, limit.Cap, used)
+					user, host, fname, limit.Cap, lres.Remaining)
 			} else {
 				message := fmt.Sprintf("rate-limit,user:%s, host:%s, method:%s is limited, cap=%d, used=%d,will reset in %.2f(m)",
-					user, host, fname, limit.Cap, used, resetDur.Minutes())
+					user, host, fname, limit.Cap, lres.Remaining, lres.ResetAfter.Minutes())
 				h.Warn(message)
 				err = errors.New(message)
 				goto ABORT
