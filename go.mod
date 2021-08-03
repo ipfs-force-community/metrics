@@ -1,4 +1,4 @@
-module github.com/ipfs-force-community/metrics
+module github.com/ipfs-force-community/metrics/v2
 
 go 1.16
 
