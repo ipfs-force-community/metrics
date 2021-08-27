@@ -36,11 +36,11 @@ func (h *RateLimiter) callProxy(fname string, fn reflect.Value, args []reflect.V
 	}
 
 	if limit.Cap == 0 {
-		h.Infof("rate-limit, user=%s, host=%s, method=%s, have no request rate limit", limit.Account, host, fname)
+		h.Debugf("rate-limit, user=%s, host=%s, method=%s, have no request rate limit", limit.Account, host, fname)
 	} else {
 		used, resetDur, allow := h.limiter.Allow(user, limit.Cap, limit.Duration)
 		if allow {
-			h.Infof("rate-limit, user=%s, host=%s, method=%s, cap=%d, used=%d,reset in %.2f(m)",
+			h.Debugf("rate-limit, user=%s, host=%s, method=%s, cap=%d, used=%d,reset in %.2f(m)",
 				user, host, fname, limit.Cap, used, resetDur.Minutes())
 		} else {
 			if used == 0 {
