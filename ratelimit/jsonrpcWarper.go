@@ -67,37 +67,43 @@ ABORT:
 	return []reflect.Value{rerr}
 }
 
-func (h *RateLimiter) WarperLimiter(in interface{}, out interface{}) {
+func (h *RateLimiter) WraperLimiter(in interface{}, out interface{}) {
 	vin := reflect.ValueOf(in)
 	rout := reflect.ValueOf(out).Elem()
 
 	for i := 0; i < vin.NumField(); i++ {
-		method := vin.Type().Field(i).Name
+		fieldName := vin.Type().Field(i).Name
 
 		if vin.Field(i).Type().Kind() == reflect.Struct {
-			h.WarperLimiter(vin.Field(i).Interface(), out)
+			// find the field which name equals 'fieldName',and it's kind is 'struct'
+			field := rout.FieldByName(fieldName)
+			if field.IsValid() && field.Type().Kind() == reflect.Struct {
+				h.WraperLimiter(vin.Field(i).Interface(), field.Addr().Interface())
+			} else {
+				h.WraperLimiter(vin.Field(i).Interface(), out)
+			}
 			continue
 		}
 
-		field, exists := rout.Type().FieldByName(method)
+		field, exists := rout.Type().FieldByName(fieldName)
 
 		if !exists || field.Type.Kind() != reflect.Func {
 			continue
 		}
 
-		fn := vin.FieldByName(method)
+		fn := vin.FieldByName(fieldName)
 		if fn.IsNil() || fn.Kind() != reflect.Func {
 			continue
 		}
 
-		rout.FieldByName(method).Set(reflect.MakeFunc(field.Type, func(args []reflect.Value) (results []reflect.Value) {
-			return h.callProxy(method, fn, args)
+		rout.FieldByName(fieldName).Set(reflect.MakeFunc(field.Type, func(args []reflect.Value) (results []reflect.Value) {
+			return h.callProxy(fieldName, fn, args)
 		}))
 	}
 }
 
 // deprecated: todo: NEED A full test
-func (h *RateLimiter) WarpFuncField(in interface{}, out interface{}) {
+func (h *RateLimiter) WrapFuncField(in interface{}, out interface{}) {
 
 	vin := reflect.ValueOf(in)
 	rout := reflect.ValueOf(out).Elem()
@@ -106,21 +112,17 @@ func (h *RateLimiter) WarpFuncField(in interface{}, out interface{}) {
 		method := vin.Type().Field(i).Name
 
 		if vin.Field(i).Type().Kind() == reflect.Struct {
-			h.WarperLimiter(vin.Field(i).Interface(), out)
+			h.WraperLimiter(vin.Field(i).Interface(), out)
 			continue
 		}
-
 		field, exists := rout.Type().FieldByName(method)
-
 		if !exists || field.Type.Kind() != reflect.Func {
 			continue
 		}
-
 		fn := vin.FieldByName(method)
 		if fn.IsNil() || fn.Kind() != reflect.Func {
 			continue
 		}
-
 		rout.FieldByName(method).Set(reflect.MakeFunc(field.Type, func(args []reflect.Value) (results []reflect.Value) {
 			return h.callProxy(method, fn, args)
 		}))
@@ -128,7 +130,7 @@ func (h *RateLimiter) WarpFuncField(in interface{}, out interface{}) {
 }
 
 // deprecated: todo : NEED A full test
-func (h *RateLimiter) WarpFunctions(in interface{}, out interface{}) {
+func (h *RateLimiter) WrapFunctions(in interface{}, out interface{}) {
 	vin := reflect.ValueOf(in)
 	vinType := reflect.TypeOf(in)
 

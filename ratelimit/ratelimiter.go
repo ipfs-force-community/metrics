@@ -32,7 +32,7 @@ type IValueFromCtx interface {
 }
 
 type IJSONRPCLimiterWarper interface {
-	WarperLimiter(template interface{}, out interface{})
+	WraperLimiter(template interface{}, out interface{})
 }
 
 type FnAccFromCtx func(context.Context) (string, bool)
