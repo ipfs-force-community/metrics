@@ -151,3 +151,20 @@ func (h *RateLimiter) WrapFunctions(in interface{}, out interface{}) {
 		}))
 	}
 }
+
+func (h *RateLimiter) ProxyLimitFullAPI(in interface{}, out interface{}) {
+	outs := GetInternalStructs(out)
+	for _, out := range outs {
+		rint := reflect.ValueOf(out).Elem()
+		ra := reflect.ValueOf(in)
+
+		for f := 0; f < rint.NumField(); f++ {
+			field := rint.Type().Field(f)
+			fn := ra.MethodByName(field.Name)
+
+			rint.Field(f).Set(reflect.MakeFunc(field.Type, func(args []reflect.Value) (results []reflect.Value) {
+				return h.CallProxy(field.Name, fn, args)
+			}))
+		}
+	}
+}
