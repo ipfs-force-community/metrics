@@ -8,7 +8,7 @@ import (
 	"reflect"
 )
 
-func (h *RateLimiter) callProxy(fname string, fn reflect.Value, args []reflect.Value) []reflect.Value {
+func (h *RateLimiter) CallProxy(fname string, fn reflect.Value, args []reflect.Value) []reflect.Value {
 	ctx := args[0].Interface().(context.Context)
 
 	host, _ := h.HostFromCtx(ctx)
@@ -97,7 +97,7 @@ func (h *RateLimiter) WraperLimiter(in interface{}, out interface{}) {
 		}
 
 		rout.FieldByName(fieldName).Set(reflect.MakeFunc(field.Type, func(args []reflect.Value) (results []reflect.Value) {
-			return h.callProxy(fieldName, fn, args)
+			return h.CallProxy(fieldName, fn, args)
 		}))
 	}
 }
@@ -124,7 +124,7 @@ func (h *RateLimiter) WrapFuncField(in interface{}, out interface{}) {
 			continue
 		}
 		rout.FieldByName(method).Set(reflect.MakeFunc(field.Type, func(args []reflect.Value) (results []reflect.Value) {
-			return h.callProxy(method, fn, args)
+			return h.CallProxy(method, fn, args)
 		}))
 	}
 }
@@ -147,7 +147,7 @@ func (h *RateLimiter) WrapFunctions(in interface{}, out interface{}) {
 
 		fn := vin.MethodByName(method)
 		vOut.FieldByName(method).Set(reflect.MakeFunc(field.Type, func(args []reflect.Value) (results []reflect.Value) {
-			return h.callProxy(method, fn, args)
+			return h.CallProxy(method, fn, args)
 		}))
 	}
 }
