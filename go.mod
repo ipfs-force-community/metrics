@@ -15,4 +15,5 @@ require (
 	github.com/prometheus/client_golang v1.11.0
 	github.com/whyrusleeping/go-logging v0.0.1
 	go.opencensus.io v0.23.0
+	go.uber.org/fx v1.15.0
 )
