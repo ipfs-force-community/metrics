@@ -71,11 +71,11 @@ export VENUS_GATEWAY_TRACE_SAMPLER=1.0
 
 	```go
 	tCnf := cctx.Context.Value("trace-config").(*metrics.TraceConfig)
-	if repoter, err := metrics.RegisterJaeger(tCnf.ServerName, tCnf); err != nil {
-		log.Fatalf("register %s JaegerRepoter to %s failed:%s",
+	if reporter, err := metrics.SetupJaegerTracing(tCnf.ServerName, tCnf); err != nil {
+		log.Fatalf("setup %s JaegerReporter to %s failed:%s",
 			tCnf.ServerName, tCnf.JaegerEndpoint)
-	} else if repoter != nil {
-		defer repoter.Flush()
+	} else if reporter != nil {
+		defer metrics.ShutdownJaeger(context.Background(), reporter)
 	}
 	```
 	
@@ -110,12 +110,14 @@ func main() {
 		ServerName:           "server-test",
 	}
 
-	repoter, err := metrics.RegisterJaeger(tCnf.ServerName, tCnf)
+	reporter, err := metrics.SetupJaegerTracing(tCnf.ServerName, tCnf)
 	if err != nil {
-		panic(fmt.Sprintf("register %s JaegerRepoter to %s failed:%s",
+		panic(fmt.Sprintf("setup %s JaegerReporter to %s failed:%s",
 			tCnf.ServerName, tCnf.JaegerEndpoint))
 	}
-	defer repoter.Flush()
+	if reporter != nil {
+		defer metrics.ShutdownJaeger(context.Background(), reporter)
+	}
 	router := mux.NewRouter()
 	
 	router.HandleFunc("/rpc/v0/ping", func(w http.ResponseWriter, req *http.Request) {
@@ -163,12 +165,14 @@ func main() {
 		ServerName:           "client-test",
 	}
 
-	repoter, err := metrics.RegisterJaeger(tCnf.ServerName, tCnf)
+	reporter, err := metrics.SetupJaegerTracing(tCnf.ServerName, tCnf)
 	if err != nil {
-		panic(fmt.Sprintf("register %s JaegerRepoter to %s failed:%s",
+		panic(fmt.Sprintf("setup %s JaegerRepoter to %s failed:%s",
 			tCnf.ServerName, tCnf.JaegerEndpoint))
 	}
-	defer repoter.Flush()
+	if reporter != nil {
+		defer metrics.ShutdownJaeger(context.Background(), reporter)
+	}
 
 	// In other usages, the context would have been passed down after starting some traces.
 	ctx := context.Background()

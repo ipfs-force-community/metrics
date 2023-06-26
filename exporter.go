@@ -7,14 +7,19 @@ import (
 	"time"
 
 	"contrib.go.opencensus.io/exporter/graphite"
-	"contrib.go.opencensus.io/exporter/jaeger"
 	"contrib.go.opencensus.io/exporter/prometheus"
 	logging "github.com/ipfs/go-log/v2"
 	ma "github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 	promclient "github.com/prometheus/client_golang/prometheus"
 	"go.opencensus.io/stats/view"
-	"go.opencensus.io/trace"
+	octrace "go.opencensus.io/trace"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/bridge/opencensus"
+	"go.opentelemetry.io/otel/exporters/jaeger"
+	"go.opentelemetry.io/otel/sdk/resource"
+	tracesdk "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 )
 
 var log = logging.Logger("metrics")
@@ -124,34 +129,42 @@ func RegisterGraphiteExporter(ctx context.Context, cfg *MetricsGraphiteExporterC
 	return nil
 }
 
-// RegisterJaeger registers the jaeger endpoint with opencensus and names the
-// tracer `name`.
-func RegisterJaeger(name string, cfg *TraceConfig) (*jaeger.Exporter, error) {
+// SetupJaegerTracing setups the jaeger endpoint and names the
+// tracer.
+func SetupJaegerTracing(serviceName string, cfg *TraceConfig) (*tracesdk.TracerProvider, error) {
 	if !cfg.JaegerTracingEnabled {
 		return nil, nil
 	}
 
 	if len(cfg.ServerName) != 0 {
-		name = cfg.ServerName
+		serviceName = cfg.ServerName
 	}
 
-	je, err := jaeger.NewExporter(jaeger.Options{
-		AgentEndpoint: cfg.JaegerEndpoint,
-		Process: jaeger.Process{
-			ServiceName: name,
-		},
-	})
+	je, err := jaeger.New(jaeger.WithCollectorEndpoint(jaeger.WithEndpoint(cfg.JaegerEndpoint)))
 	if err != nil {
 		return nil, err
 	}
+	tp := tracesdk.NewTracerProvider(
+		// Always be sure to batch in production.
+		tracesdk.WithBatcher(je),
+		// Record information about this application in an Resource.
+		tracesdk.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceNameKey.String(serviceName),
+		)),
+		tracesdk.WithSampler(tracesdk.TraceIDRatioBased(cfg.ProbabilitySampler)),
+	)
 
-	trace.RegisterExporter(je)
-	trace.ApplyConfig(trace.Config{DefaultSampler: trace.ProbabilitySampler(cfg.ProbabilitySampler)})
+	otel.SetTracerProvider(tp)
+	tracer := tp.Tracer(serviceName)
+	octrace.DefaultTracer = opencensus.NewTracer(tracer)
 
-	return je, err
+	return tp, err
 }
 
-func UnregisterJaeger(exp *jaeger.Exporter) {
-	exp.Flush()
-	trace.UnregisterExporter(exp)
+func ShutdownJaeger(ctx context.Context, je *tracesdk.TracerProvider) error {
+	if err := je.ForceFlush(ctx); err != nil {
+		log.Warnf("failed to flush jaeger: %w", err)
+	}
+	return je.Shutdown(ctx)
 }
