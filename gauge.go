@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
@@ -9,6 +10,7 @@ import (
 
 // Int64Gauge wraps an opencensus int64 measure that is uses as a gauge.
 type Int64Gauge struct {
+	value     int64
 	measureCt *stats.Int64Measure
 	view      *view.View
 }
@@ -39,5 +41,17 @@ func NewInt64Gauge(name, desc string, keys ...tag.Key) *Int64Gauge {
 
 // Set sets the value of the gauge to value `v`.
 func (c *Int64Gauge) Set(ctx context.Context, v int64) {
-	stats.Record(ctx, c.measureCt.M(v))
+	c.value = v
+	c.record(ctx)
+}
+
+// Inc increments the counter by value `v`.
+func (c *Int64Gauge) Inc(ctx context.Context, v int64) {
+	c.value += v
+	c.record(ctx)
+}
+
+// Set sets the value of the gauge to value `v`.
+func (c *Int64Gauge) record(ctx context.Context) {
+	stats.Record(ctx, c.measureCt.M(c.value))
 }
