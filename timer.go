@@ -19,6 +19,7 @@ func NewTimerMs(name, desc string, tagKeys ...tag.Key) *Float64Timer {
 
 // NewTimerWithBuckets creates a Float64Timer wrapping an opencensus float64 measurement.
 func NewTimerWithBuckets(name, desc, unit string, bounds []float64, tagKeys ...tag.Key) *Float64Timer {
+	log.Infof("registering timer: %s - %s", name, desc)
 	fMeasure := stats.Float64(name, desc, unit)
 	fView := &view.View{
 		Name:        name,
@@ -47,19 +48,17 @@ type Float64Timer struct {
 }
 
 // Start starts a timer and returns a Stopwatch.
-func (t *Float64Timer) Start(ctx context.Context) *Stopwatch {
+func (t *Float64Timer) Start() *Stopwatch {
 	return &Stopwatch{
-		ctx:      ctx,
 		start:    time.Now(),
 		recorder: t.measureMs.M,
 	}
-
 }
 
 // Stopwatch contains a start time and a recorder, when stopped it record the
 // duration since start time began via its recorder function.
 type Stopwatch struct {
-	ctx      context.Context
+	// ctx was removed because we should use the one pass in
 	start    time.Time
 	recorder func(v float64) stats.Measurement
 }
