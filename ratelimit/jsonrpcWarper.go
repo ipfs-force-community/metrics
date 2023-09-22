@@ -18,6 +18,8 @@ func (h *RateLimiter) CallProxy(fname string, fn reflect.Value, args []reflect.V
 	span := trace.FromContext(ctx)
 	if span == nil {
 		ctx, span = trace.StartSpan(ctx, "api.handle")
+		args[0] = reflect.ValueOf(ctx)
+		defer span.End()
 	}
 
 	span.AddAttributes(trace.StringAttribute("account", user))

@@ -1,9 +1,9 @@
 package main
 
 import (
-	"time"
 	"fmt"
 	"github.com/go-redis/redis"
+	"time"
 )
 
 const (
@@ -92,7 +92,7 @@ func initRedisClient() {
 
 func MakeSpace(key string) {
 	now := time.Now().Unix()
-	redisdb.EvalSha(makeSpaceSha, []string{key}, now).Result()
+	redisdb.EvalSha(makeSpaceSha, []string{key}, now).Result() //nolint:errcheck
 }
 
 // quota为每次处理请求所需要的资源配额

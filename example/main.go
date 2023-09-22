@@ -32,7 +32,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
-func example(ctx context.Context) {
+func example(ctx context.Context) { //nolint:deadcode,unused
 
 	// Create measures. The program will record measures for the size of
 	// processed videos and the number of videos marked as spam.

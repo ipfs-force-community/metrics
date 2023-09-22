@@ -89,10 +89,10 @@ func RegisterPrometheusExporter(ctx context.Context, cfg *MetricsPrometheusExpor
 	}
 
 	go func() {
-		select {
-		case <-ctx.Done():
-			log.Info("context done")
-		}
+
+		<-ctx.Done()
+		log.Info("context done")
+
 		view.UnregisterExporter(pe)
 		if err := srv.Shutdown(context.TODO()); err != nil {
 			log.Errorf("shutting down prometheus server failed: %s", err)
@@ -118,10 +118,8 @@ func RegisterGraphiteExporter(ctx context.Context, cfg *MetricsGraphiteExporterC
 	view.SetReportingPeriod(reportPeriod)
 
 	go func() {
-		select {
-		case <-ctx.Done():
-			log.Info("context done")
-		}
+		<-ctx.Done()
+		log.Info("context done")
 
 		view.UnregisterExporter(exporter)
 	}()
