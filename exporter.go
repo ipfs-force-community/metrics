@@ -127,6 +127,29 @@ func RegisterGraphiteExporter(ctx context.Context, cfg *MetricsGraphiteExporterC
 	return nil
 }
 
+func SetupMetrics(ctx context.Context, cfg *MetricsConfig) error {
+	if cfg.Enabled {
+		switch cfg.Exporter.Type {
+		case ETPrometheus:
+			go func() {
+				if err := RegisterPrometheusExporter(ctx, cfg.Exporter.Prometheus); err != nil {
+					log.Errorf("failed to register prometheus exporter err: %v", err)
+				}
+				log.Infof("prometheus exporter server graceful shutdown successful")
+			}()
+
+		case ETGraphite:
+			if err := RegisterGraphiteExporter(ctx, cfg.Exporter.Graphite); err != nil {
+				log.Errorf("failed to register graphite exporter: %v", err)
+			}
+		default:
+			log.Warnf("invalid exporter type: %s", cfg.Exporter.Type)
+		}
+	}
+
+	return nil
+}
+
 // SetupJaegerTracing setups the jaeger endpoint and names the
 // tracer.
 func SetupJaegerTracing(serviceName string, cfg *TraceConfig) (*tracesdk.TracerProvider, error) {
