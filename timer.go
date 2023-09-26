@@ -68,6 +68,16 @@ type Stopwatch struct {
 // Stop rounds the time since Start was called to milliseconds and records the value
 // in the corresponding opencensus view.
 func (sw *Stopwatch) Stop(ctx context.Context) time.Duration {
+	defer func() {
+		// set start to zero to indicate that the stopwatch has been stopped
+		sw.start = time.Time{}
+	}()
+
+	if sw.start.IsZero() {
+		log.Warn("Stopwatch.Stop should not be called again")
+		return 0
+	}
+
 	duration := time.Since(sw.start).Round(time.Millisecond)
 	stats.Record(ctx, sw.recorder(float64(duration)/1e6))
 	return duration
