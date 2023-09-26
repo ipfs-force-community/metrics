@@ -48,11 +48,13 @@ type Float64Timer struct {
 }
 
 // Start starts a timer and returns a Stopwatch.
-func (t *Float64Timer) Start() *Stopwatch {
-	return &Stopwatch{
+func (t *Float64Timer) Start() func(context.Context) time.Duration {
+	sw := &Stopwatch{
 		start:    time.Now(),
 		recorder: t.measureMs.M,
 	}
+
+	return sw.Stop
 }
 
 // Stopwatch contains a start time and a recorder, when stopped it record the

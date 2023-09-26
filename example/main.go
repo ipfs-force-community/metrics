@@ -85,9 +85,9 @@ func testTimer(ctx context.Context) {
 	go func() {
 		for {
 			ctx, _ := tag.New(ctx, tag.Insert(tagKey, "test"))
-			w := timer.Start()
+			stopper := timer.Start()
 			<-time.After(time.Millisecond * time.Duration(1000+rand.Intn(400)))
-			w.Stop(ctx)
+			stopper(ctx)
 		}
 	}()
 
