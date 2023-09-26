@@ -158,3 +158,65 @@ func (c *Counter) Tick(ctx context.Context) {
 func NewCounter(name, desc string, keys ...tag.Key) *Counter {
 	return (*Counter)(NewInt64WithCounter(name, desc, "", keys...))
 }
+
+var tagCategory = tag.MustNewKey("category")
+
+type Int64WithCategory struct {
+	value map[string]int64
+
+	measureCt *stats.Int64Measure
+	view      *view.View
+}
+
+// Set sets the value to `v`.
+func (i *Int64WithCategory) Set(ctx context.Context, category string, v int64) {
+	ctx, _ = tag.New(ctx, tag.Insert(tagCategory, category))
+
+	if _, ok := i.value[category]; !ok {
+		i.value[category] = 0
+	}
+	i.value[category] = v
+	stats.Record(ctx, i.measureCt.M(i.value[category]))
+}
+
+// Inc increments the inner value by value `v`.
+func (i *Int64WithCategory) Inc(ctx context.Context, category string, v int64) {
+	ctx, _ = tag.New(ctx, tag.Insert(tagCategory, category))
+
+	if _, ok := i.value[category]; !ok {
+		i.value[category] = 0
+	}
+	i.value[category] += v
+	stats.Record(ctx, i.measureCt.M(i.value[category]))
+}
+
+func NewInt64WithCategory(name, desc string, unit string, keys ...tag.Key) *Int64WithCategory {
+	keys = append(keys, tagCategory)
+	if unit == "" {
+		unit = stats.UnitDimensionless
+	}
+
+	iMeasure := stats.Int64(name, desc, unit)
+
+	iView := &view.View{
+		Name:        name,
+		Measure:     iMeasure,
+		Description: desc,
+		Aggregation: view.LastValue(),
+		TagKeys:     keys,
+	}
+	if err := view.Register(iView); err != nil {
+		// a panic here indicates a developer error when creating a view.
+		// Since this method is called in init() methods, this panic when hit
+		// will cause running the program to fail immediately.
+		panic(err)
+	}
+
+	value := make(map[string]int64)
+
+	return &Int64WithCategory{
+		measureCt: iMeasure,
+		view:      iView,
+		value:     value,
+	}
+}
