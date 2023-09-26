@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -128,6 +129,13 @@ func RegisterGraphiteExporter(ctx context.Context, cfg *MetricsGraphiteExporterC
 }
 
 func SetupMetrics(ctx context.Context, cfg *MetricsConfig) error {
+	// log config
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal metrics config: %w", err)
+	}
+	log.Infof("metrics config: %s", string(b))
+
 	if cfg.Enabled {
 		switch cfg.Exporter.Type {
 		case ETPrometheus:
