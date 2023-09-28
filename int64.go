@@ -220,3 +220,14 @@ func NewInt64WithCategory(name, desc string, unit string, keys ...tag.Key) *Int6
 		value:     value,
 	}
 }
+
+type CounterWithCategory Int64WithCategory
+
+// Tick triggers a record with value 1
+func (c *CounterWithCategory) Tick(ctx context.Context, category string) {
+	(*Int64WithCategory)(c).Set(ctx, category, 1)
+}
+
+func NewCounterWithCategory(name, desc string, keys ...tag.Key) *CounterWithCategory {
+	return (*CounterWithCategory)(NewInt64WithCategory(name, desc, "", keys...))
+}
