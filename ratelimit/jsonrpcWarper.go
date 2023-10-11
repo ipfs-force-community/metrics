@@ -7,8 +7,6 @@ import (
 	"reflect"
 
 	"go.opencensus.io/trace"
-
-	"github.com/filecoin-project/venus/venus-shared/api"
 )
 
 func (h *RateLimiter) CallProxy(fname string, fn reflect.Value, args []reflect.Value) []reflect.Value {
@@ -156,7 +154,7 @@ func (h *RateLimiter) WrapFunctions(in interface{}, out interface{}) {
 }
 
 func (h *RateLimiter) ProxyLimitFullAPI(in interface{}, out interface{}) {
-	outs := api.GetInternalStructs(out)
+	outs := GetInternalStructs(out)
 	for _, out := range outs {
 		rint := reflect.ValueOf(out).Elem()
 		ra := reflect.ValueOf(in)
