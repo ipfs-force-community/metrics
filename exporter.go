@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -89,10 +90,10 @@ func RegisterPrometheusExporter(ctx context.Context, cfg *MetricsPrometheusExpor
 	}
 
 	go func() {
-		select {
-		case <-ctx.Done():
-			log.Info("context done")
-		}
+
+		<-ctx.Done()
+		log.Info("context done")
+
 		view.UnregisterExporter(pe)
 		if err := srv.Shutdown(context.TODO()); err != nil {
 			log.Errorf("shutting down prometheus server failed: %s", err)
@@ -118,13 +119,41 @@ func RegisterGraphiteExporter(ctx context.Context, cfg *MetricsGraphiteExporterC
 	view.SetReportingPeriod(reportPeriod)
 
 	go func() {
-		select {
-		case <-ctx.Done():
-			log.Info("context done")
-		}
+		<-ctx.Done()
+		log.Info("context done")
 
 		view.UnregisterExporter(exporter)
 	}()
+
+	return nil
+}
+
+func SetupMetrics(ctx context.Context, cfg *MetricsConfig) error {
+	// log config
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal metrics config: %w", err)
+	}
+	log.Infof("metrics config: %s", string(b))
+
+	if cfg.Enabled {
+		switch cfg.Exporter.Type {
+		case ETPrometheus:
+			go func() {
+				if err := RegisterPrometheusExporter(ctx, cfg.Exporter.Prometheus); err != nil {
+					log.Errorf("failed to register prometheus exporter err: %v", err)
+				}
+				log.Infof("prometheus exporter server graceful shutdown successful")
+			}()
+
+		case ETGraphite:
+			if err := RegisterGraphiteExporter(ctx, cfg.Exporter.Graphite); err != nil {
+				log.Errorf("failed to register graphite exporter: %v", err)
+			}
+		default:
+			log.Warnf("invalid exporter type: %s", cfg.Exporter.Type)
+		}
+	}
 
 	return nil
 }

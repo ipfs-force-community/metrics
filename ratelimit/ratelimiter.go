@@ -99,7 +99,7 @@ func (h *RateLimiter) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 				user, host, limit.Cap, used, resetDur.Minutes())
 		} else {
 			if used == 0 {
-				h.Warnf("rate-limit,please check if redis-service is on,request-limit:cap=%d,used=%d, but returned allow is 'false'")
+				h.Warnf("rate-limit,please check if redis-service is on,request-limit:cap=%d,used=%d, but returned allow is 'false'", limit.Cap, used)
 			} else {
 				h.Warnf("rate-limit,user:%s, host:%s request is limited, cap=%d, used=%d,will reset in %.2f(m)",
 					user, host, limit.Cap, used, resetDur.Minutes())

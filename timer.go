@@ -47,19 +47,19 @@ type Float64Timer struct {
 }
 
 // Start starts a timer and returns a Stopwatch.
-func (t *Float64Timer) Start(ctx context.Context) *Stopwatch {
-	return &Stopwatch{
-		ctx:      ctx,
+func (t *Float64Timer) Start() func(context.Context) time.Duration {
+	sw := &Stopwatch{
 		start:    time.Now(),
 		recorder: t.measureMs.M,
 	}
 
+	return sw.Stop
 }
 
 // Stopwatch contains a start time and a recorder, when stopped it record the
 // duration since start time began via its recorder function.
 type Stopwatch struct {
-	ctx      context.Context
+	// ctx was removed because we should use the one pass in
 	start    time.Time
 	recorder func(v float64) stats.Measurement
 }
@@ -67,6 +67,16 @@ type Stopwatch struct {
 // Stop rounds the time since Start was called to milliseconds and records the value
 // in the corresponding opencensus view.
 func (sw *Stopwatch) Stop(ctx context.Context) time.Duration {
+	defer func() {
+		// set start to zero to indicate that the stopwatch has been stopped
+		sw.start = time.Time{}
+	}()
+
+	if sw.start.IsZero() {
+		log.Warn("Stopwatch.Stop should not be called again")
+		return 0
+	}
+
 	duration := time.Since(sw.start).Round(time.Millisecond)
 	stats.Record(ctx, sw.recorder(float64(duration)/1e6))
 	return duration
