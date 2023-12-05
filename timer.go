@@ -19,7 +19,6 @@ func NewTimerMs(name, desc string, tagKeys ...tag.Key) *Float64Timer {
 
 // NewTimerWithBuckets creates a Float64Timer wrapping an opencensus float64 measurement.
 func NewTimerWithBuckets(name, desc, unit string, bounds []float64, tagKeys ...tag.Key) *Float64Timer {
-	log.Infof("registering timer: %s - %s", name, desc)
 	fMeasure := stats.Float64(name, desc, unit)
 	fView := &view.View{
 		Name:        name,
