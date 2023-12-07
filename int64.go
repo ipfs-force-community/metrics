@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"sync"
 
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
@@ -13,16 +14,24 @@ type Int64 struct {
 	value     int64
 	measureCt *stats.Int64Measure
 	view      *view.View
+
+	mux sync.Mutex
 }
 
 // Set sets the value to `v`.
 func (i *Int64) Set(ctx context.Context, v int64) {
+	i.mux.Lock()
+	defer i.mux.Unlock()
+
 	i.value = v
 	i.record(ctx)
 }
 
 // Inc increments the inner value by value `v`.
 func (i *Int64) Inc(ctx context.Context, v int64) {
+	i.mux.Lock()
+	defer i.mux.Unlock()
+
 	i.value += v
 	i.record(ctx)
 }
@@ -166,10 +175,15 @@ type Int64WithCategory struct {
 
 	measureCt *stats.Int64Measure
 	view      *view.View
+
+	mux sync.Mutex
 }
 
 // Set sets the value to `v`.
 func (i *Int64WithCategory) Set(ctx context.Context, category string, v int64) {
+	i.mux.Lock()
+	defer i.mux.Unlock()
+
 	ctx, _ = tag.New(ctx, tag.Insert(tagCategory, category))
 
 	if _, ok := i.value[category]; !ok {
@@ -181,6 +195,9 @@ func (i *Int64WithCategory) Set(ctx context.Context, category string, v int64) {
 
 // Inc increments the inner value by value `v`.
 func (i *Int64WithCategory) Inc(ctx context.Context, category string, v int64) {
+	i.mux.Lock()
+	defer i.mux.Unlock()
+
 	ctx, _ = tag.New(ctx, tag.Insert(tagCategory, category))
 
 	if _, ok := i.value[category]; !ok {
